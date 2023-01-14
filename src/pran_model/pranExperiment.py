@@ -20,10 +20,12 @@ scaled_features = mmscaler.fit_transform(df.drop(["Class"], axis = 1))
 X = scaled_features
 y = df["Class"]
 
-X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,random_state=1)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1,random_state=1, stratify = y)
+X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=1, stratify = y_train)
 
-pran = PRAN(X_train, y_train, 50)
-pran.fit(epochs = 1000, batch_size = 10)
+
+pran = PRAN(X_train, y_train, X_val, y_val, 50)
+pran.fit(epochs = 100, batch_size = 5)
 pran.plotPR()
 y_pred = pran.predict(X_test)
 y_pred = (y_pred>0.5).float()

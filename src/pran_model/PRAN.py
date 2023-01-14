@@ -22,15 +22,20 @@ class PRAN():
     X_train = None
     y_train = None
 
+    X_val = None
+    y_val = None
+
     rb_samples = 0
 
     precisionTrain = []
     recallTrain = []
     epochsTrain = []
 
-    def __init__(self, X_train, y_train, rb_samples=100):
+    def __init__(self, X_train, y_train, X_val, y_val, rb_samples=100):
         self.X_train = X_train
         self.y_train = y_train
+        self.X_val = X_val
+        self.y_val = y_val
 
         self.rb_samples = rb_samples
 
@@ -40,6 +45,11 @@ class PRAN():
     def fit(self, epochs, batch_size):
         tensor_x = torch.Tensor(self.X_train)
         tensor_y = torch.Tensor(self.y_train)
+
+        tensor_x_val = torch.Tensor(self.X_val)
+        tensor_y_val = torch.Tensor(self.y_val.to_numpy())
+        print(tensor_x_val)
+        print(tensor_y_val)
 
         my_dataset = torch.utils.data.TensorDataset(tensor_x,tensor_y)
         data_loader = torch.utils.data.DataLoader(my_dataset, batch_size=batch_size, shuffle=True)
@@ -52,7 +62,6 @@ class PRAN():
 
         for epoch in range(epochs):
             for batch_x, batch_y in data_loader:
-
                 generated_data = self.recall_booster(batch_x)
                 generated_data = torch.reshape(generated_data, (batch_x.size(0), self.X_train.shape[1]))
                 tensor_x_new = torch.vstack((batch_x, generated_data))
@@ -60,21 +69,21 @@ class PRAN():
                 ones = torch.reshape(ones, (ones.size(0), ))
                 tensor_y_new = torch.hstack((batch_y, ones))
 
-                y_pred = self.precision_booster(tensor_x_new).detach()
+                y_pred = self.precision_booster(tensor_x_val).detach()
                 y_pred = (y_pred>0.5).float()
 
-                precision = self.precision_booster.getPrecision(tensor_y_new, y_pred)
-                recall = self.recall_booster.getRecall(tensor_y_new, y_pred)
+                precision = self.precision_booster.getPrecision(tensor_y_val, y_pred)
+                recall = self.recall_booster.getRecall(tensor_y_val, y_pred)
                 
                 rb_optimizer.zero_grad()
                 pb_optimizer.zero_grad()
 
                 if precision >= recall:
-                    recall_cost = self.recall_booster.cost(tensor_y_new, y_pred)
+                    recall_cost = self.recall_booster.cost(tensor_y_val, y_pred)
                     recall_cost.backward()
                     rb_optimizer.step()
                 elif precision < recall:
-                    precision_cost = self.precision_booster.cost(tensor_y_new, y_pred)
+                    precision_cost = self.precision_booster.cost(tensor_y_val, y_pred)
                     precision_cost.backward()
                     pb_optimizer.step()
             self.precisionTrain.append(precision)
