@@ -86,7 +86,7 @@ class RecallBooster(nn.Module):
         recall_cost = Variable(torch.tensor(recall_cost, dtype=torch.float32), requires_grad = True)
         loss_KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         # return Variable(torch.tensor(recall_cost, dtype=torch.float32), requires_grad = True)
-        return recall_cost + loss_KLD
+        return -torch.log(recall_cost) + loss_KLD
     
     def getRecall(self, real, predicted):
         recall = recall_score(real, predicted)

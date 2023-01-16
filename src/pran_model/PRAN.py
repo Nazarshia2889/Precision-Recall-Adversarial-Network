@@ -28,7 +28,7 @@ class PRAN():
         self.precision_booster = PrecisionBooster(shape)
         self.recall_booster = RecallBooster(shape, 50, 12)
     
-    def fit(self, X_train, y_train, X_val, y_val, batch_rb_samples, epochs, batch_size):
+    def fit(self, X_train, y_train, batch_rb_samples, epochs, batch_size, lr_pb, lr_rb, l2_pb, l2_rb):
         mu, logvar = self.init_train_rb(X_train, y_train, batch_size = 8, lr = 1e-3, epochs = 2000)
 
         print("--Initial Recall Booster Training Complete--")
@@ -36,17 +36,14 @@ class PRAN():
         tensor_x = torch.Tensor(X_train)
         tensor_y = torch.Tensor(y_train)
 
-        tensor_x_val = torch.Tensor(X_val)
-        tensor_y_val = torch.Tensor(y_val.to_numpy())
-
         my_dataset = torch.utils.data.TensorDataset(tensor_x,tensor_y)
         data_loader = torch.utils.data.DataLoader(my_dataset, batch_size=batch_size, shuffle=True)
         num_batches = len(data_loader)
 
-        pb_optimizer = optim.Adam(self.precision_booster.parameters(), lr=1e-3)
-        rb_optimizer = optim.Adam(self.recall_booster.parameters(), lr=1e-3)
+        pb_optimizer = optim.Adam(self.precision_booster.parameters(), lr=lr_pb, weight_decay = l2_pb)
+        rb_optimizer = optim.Adam(self.recall_booster.parameters(), lr=lr_rb, weight_decay = l2_rb)
 
-        self.epochsTrain = np.arange(0, epochs)
+        torch.autograd.set_detect_anomaly(True)
 
         for epoch in range(epochs):
             for batch_x, batch_y in data_loader:
@@ -58,28 +55,25 @@ class PRAN():
                 with torch.no_grad():
                     pred = self.recall_booster.decode(z)
 
-                # generated_data = self.recall_booster(batch_x)
-                # generated_data = torch.reshape(generated_data, (batch_x.size(0), self.X_train.shape[1]))
                 tensor_x_new = torch.vstack((batch_x, pred))
                 ones = self.ones_target(no_samples)
                 ones = torch.reshape(ones, (ones.size(0), ))
                 tensor_y_new = torch.hstack((batch_y, ones))
+                
+                rb_optimizer.zero_grad()
+                pb_optimizer.zero_grad()
 
                 y_pred = self.precision_booster(tensor_x_new).detach()
                 y_pred = (y_pred>0.5).float()
 
                 precision = self.precision_booster.getPrecision(tensor_y_new, y_pred)
                 recall = self.recall_booster.getRecall(tensor_y_new, y_pred)
-
-                print("Precision: ", precision)
-                print("Recall: ", recall)
                 
-                rb_optimizer.zero_grad()
-                pb_optimizer.zero_grad()
-
                 if precision >= recall:
+                    # recon_batch, mu, logvar = self.recall_booster(batch_x[torch.where(batch_y == 1)])
+                    recon_batch, mu, logvar = self.recall_booster(batch_x)
                     recall_cost = self.recall_booster.cost(tensor_y_new, y_pred, mu, logvar)
-                    recall_cost.backward(retain_graph=True)
+                    recall_cost.backward()
                     rb_optimizer.step()
                 elif precision < recall:
                     precision_cost = self.precision_booster.cost(tensor_y_new, y_pred)
@@ -87,6 +81,8 @@ class PRAN():
                     pb_optimizer.step()
             self.precisionTrain.append(precision)
             self.recallTrain.append(recall)
+            self.epochsTrain.append(epoch)
+            print(f"Epoch #{epoch} - \n Precision: {precision} \n Recall: {recall} \n")
     
     def init_train_rb(self, X_train, y_train, batch_size, lr, epochs):
         X_train_pos = X_train[np.where(y_train == 1)[0]]
@@ -107,9 +103,11 @@ class PRAN():
                 init_optim.zero_grad()
                 recon_batch, mu, logvar = self.recall_booster(batch_x)
                 loss = loss_mse(recon_batch, batch_x, mu, logvar)
-                loss.backward()
+                loss.backward(retain_graph=True)
                 init_optim.step()
-        
+
+        init_optim.zero_grad()
+
         return mu, logvar
     
     def predict(self, X_test):
