@@ -5,6 +5,7 @@ from sklearn.metrics import precision_score
 
 from PrecisionBooster import PrecisionBooster
 from RecallBooster import RecallBooster
+from RecallBooster import mseLoss
 
 import numpy as np
 import pandas as pd
@@ -19,75 +20,97 @@ class PRAN():
     precision_booster = None
     recall_booster = None
 
-    X_train = None
-    y_train = None
-
-    X_val = None
-    y_val = None
-
-    rb_samples = 0
-
     precisionTrain = []
     recallTrain = []
     epochsTrain = []
 
-    def __init__(self, X_train, y_train, X_val, y_val, rb_samples=100):
-        self.X_train = X_train
-        self.y_train = y_train
-        self.X_val = X_val
-        self.y_val = y_val
-
-        self.rb_samples = rb_samples
-
-        self.precision_booster = PrecisionBooster(X_train.shape[1])
-        self.recall_booster = RecallBooster(X_train.shape[1], self.rb_samples)
+    def __init__(self, shape):
+        self.precision_booster = PrecisionBooster(shape)
+        self.recall_booster = RecallBooster(shape, 50, 12)
     
-    def fit(self, epochs, batch_size):
-        tensor_x = torch.Tensor(self.X_train)
-        tensor_y = torch.Tensor(self.y_train)
+    def fit(self, X_train, y_train, X_val, y_val, batch_rb_samples, epochs, batch_size):
+        mu, logvar = self.init_train_rb(X_train, y_train, batch_size = 8, lr = 1e-3, epochs = 2000)
 
-        tensor_x_val = torch.Tensor(self.X_val)
-        tensor_y_val = torch.Tensor(self.y_val.to_numpy())
-        print(tensor_x_val)
-        print(tensor_y_val)
+        print("--Initial Recall Booster Training Complete--")
+
+        tensor_x = torch.Tensor(X_train)
+        tensor_y = torch.Tensor(y_train)
+
+        tensor_x_val = torch.Tensor(X_val)
+        tensor_y_val = torch.Tensor(y_val.to_numpy())
 
         my_dataset = torch.utils.data.TensorDataset(tensor_x,tensor_y)
         data_loader = torch.utils.data.DataLoader(my_dataset, batch_size=batch_size, shuffle=True)
         num_batches = len(data_loader)
 
-        pb_optimizer = optim.Adam(self.precision_booster.parameters(), lr=0.001)
-        rb_optimizer = optim.Adam(self.recall_booster.parameters(), lr=0.001)
+        pb_optimizer = optim.Adam(self.precision_booster.parameters(), lr=1e-3)
+        rb_optimizer = optim.Adam(self.recall_booster.parameters(), lr=1e-3)
 
         self.epochsTrain = np.arange(0, epochs)
 
         for epoch in range(epochs):
             for batch_x, batch_y in data_loader:
-                generated_data = self.recall_booster(batch_x)
-                generated_data = torch.reshape(generated_data, (batch_x.size(0), self.X_train.shape[1]))
-                tensor_x_new = torch.vstack((batch_x, generated_data))
-                ones = self.ones_target(generated_data.size(0))
+                sigma = torch.exp(logvar/2)
+                no_samples = batch_rb_samples
+                q = torch.distributions.Normal(mu.mean(axis=0), sigma.mean(axis=0))
+                z = q.rsample(sample_shape=torch.Size([no_samples]))
+
+                with torch.no_grad():
+                    pred = self.recall_booster.decode(z)
+
+                # generated_data = self.recall_booster(batch_x)
+                # generated_data = torch.reshape(generated_data, (batch_x.size(0), self.X_train.shape[1]))
+                tensor_x_new = torch.vstack((batch_x, pred))
+                ones = self.ones_target(no_samples)
                 ones = torch.reshape(ones, (ones.size(0), ))
                 tensor_y_new = torch.hstack((batch_y, ones))
 
-                y_pred = self.precision_booster(tensor_x_val).detach()
+                y_pred = self.precision_booster(tensor_x_new).detach()
                 y_pred = (y_pred>0.5).float()
 
-                precision = self.precision_booster.getPrecision(tensor_y_val, y_pred)
-                recall = self.recall_booster.getRecall(tensor_y_val, y_pred)
+                precision = self.precision_booster.getPrecision(tensor_y_new, y_pred)
+                recall = self.recall_booster.getRecall(tensor_y_new, y_pred)
+
+                print("Precision: ", precision)
+                print("Recall: ", recall)
                 
                 rb_optimizer.zero_grad()
                 pb_optimizer.zero_grad()
 
                 if precision >= recall:
-                    recall_cost = self.recall_booster.cost(tensor_y_val, y_pred)
-                    recall_cost.backward()
+                    recall_cost = self.recall_booster.cost(tensor_y_new, y_pred, mu, logvar)
+                    recall_cost.backward(retain_graph=True)
                     rb_optimizer.step()
                 elif precision < recall:
-                    precision_cost = self.precision_booster.cost(tensor_y_val, y_pred)
+                    precision_cost = self.precision_booster.cost(tensor_y_new, y_pred)
                     precision_cost.backward()
                     pb_optimizer.step()
             self.precisionTrain.append(precision)
             self.recallTrain.append(recall)
+    
+    def init_train_rb(self, X_train, y_train, batch_size, lr, epochs):
+        X_train_pos = X_train[np.where(y_train == 1)[0]]
+        y_train_pos = np.where(y_train == 1)[0]
+
+        tensor_x_pos = torch.Tensor(X_train_pos)
+        tensor_y_pos = torch.Tensor(y_train_pos)
+
+        train_vae_data = torch.utils.data.TensorDataset(tensor_x_pos, tensor_y_pos)
+        train_vae_loader = torch.utils.data.DataLoader(train_vae_data, batch_size=batch_size, shuffle=True)
+
+        init_optim = optim.Adam(self.recall_booster.parameters(), lr = lr)
+        loss_mse = mseLoss()
+
+        for epoch in range(epochs):
+            self.recall_booster.train()
+            for batch_x, batch_y in train_vae_loader:
+                init_optim.zero_grad()
+                recon_batch, mu, logvar = self.recall_booster(batch_x)
+                loss = loss_mse(recon_batch, batch_x, mu, logvar)
+                loss.backward()
+                init_optim.step()
+        
+        return mu, logvar
     
     def predict(self, X_test):
         test_tensor_x = torch.Tensor(X_test)

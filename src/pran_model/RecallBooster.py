@@ -8,6 +8,8 @@ import pandas as pd
 import numpy as np 
 from sklearn import preprocessing 
 
+from sklearn.metrics import recall_score
+
 class RecallBooster(nn.Module):
     '''
     Model that focuses on recall
@@ -78,10 +80,13 @@ class RecallBooster(nn.Module):
         z = self.reparameterize(mu, logvar)
         return self.decode(z), mu, logvar
 
-    def cost(self, real, predicted):
+    def cost(self, real, predicted, mu, logvar):
         recall = recall_score(real, predicted)
         recall_cost = 1 - recall
-        return Variable(torch.tensor(recall_cost, dtype=torch.float32), requires_grad = True)
+        recall_cost = Variable(torch.tensor(recall_cost, dtype=torch.float32), requires_grad = True)
+        loss_KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        # return Variable(torch.tensor(recall_cost, dtype=torch.float32), requires_grad = True)
+        return recall_cost + loss_KLD
     
     def getRecall(self, real, predicted):
         recall = recall_score(real, predicted)
