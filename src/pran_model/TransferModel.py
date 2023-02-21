@@ -29,24 +29,15 @@ class TransferModel(torch.nn.Module):
         self.hidden0 = nn.Sequential(
             nn.Linear(self.inp, 16),
             nn.LeakyReLU(0.2),
-            # nn.Dropout(0.3)
         ) 
 
         self.hidden1 = nn.Sequential(
             nn.Linear(16, 16),
-            nn.LeakyReLU(0.2),
-            # nn.Dropout(0.6)
+            nn.LeakyReLU(0.2)
         ) 
-
-        # self.hidden2 = nn.Sequential(
-        #     nn.Linear(16, 16),
-        #     nn.LeakyReLU(0.2),
-        #     # nn.Dropout(0.3)
-        # )
 
         self.out = nn.Sequential(
             torch.nn.Linear(16, self.outDim)
-            # torch.nn.Sigmoid()
         )
 
         self.precisionTrain = []
@@ -56,7 +47,6 @@ class TransferModel(torch.nn.Module):
     def forward(self, x):
         x = self.hidden0(x)
         x = self.hidden1(x)
-        # x = self.hidden2(x)
         x = self.out(x)
         return x
 
