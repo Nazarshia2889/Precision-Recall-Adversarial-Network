@@ -36,8 +36,8 @@ class PRAN():
         Input_dim: Number of features in input data
         Mid_dim: Intermediate number of nodes between Recall Booster and Precision Booster
     '''
-    def __init__(self, input_dim, mid_dim):
-        self.recall_booster = RecallBooster(input_dim, mid_dim)
+    def __init__(self, shape=None, mid_dim=16):
+        self.recall_booster = RecallBooster(shape, mid_dim)
         self.precision_booster = PrecisionBooster(mid_dim)
         self.precisionTrain = []
         self.recallTrain = []
@@ -59,7 +59,7 @@ class PRAN():
         beta_pb: Weight term for 1 class Precision Booster ( < 1)
         beta_rb: Weight term for 1 class Recall Booster ( > 1)
     '''
-    def fit(self, X_train, y_train, X_val, y_val, epochs, batch_size, lr_pb, lr_rb, l2_pb, l2_rb, beta_pb, beta_rb):
+    def fit(self, X_train, y_train, X_val, y_val, epochs, batch_size, lr_pb, lr_rb, l2_pb, l2_rb, weights_pb, weights_rb):
         tensor_x = torch.Tensor(X_train)
         tensor_y = torch.Tensor(y_train)
 
@@ -75,27 +75,24 @@ class PRAN():
         precision_training = False
         recall_training = True
 
-        avgPrecisions = []
-        avgRecalls = []
-
         for epoch in range(epochs):
             for batch_x, batch_y in data_loader:
                 if recall_training:
                     rb_optimizer.zero_grad()
                     output1 = self.recall_booster(batch_x)
                     output1 = self.precision_booster(output1)
-                    recall_cost = self.recall_booster.cost(torch.reshape(batch_y, (batch_y.size(0), 1)), torch.reshape(output1, (output1.size(0), 1)), beta = beta_rb, epsilon = 1e-9)
+                    recall_cost = self.recall_booster.cost(torch.reshape(batch_y, (batch_y.size(0), 1)), torch.reshape(output1, (output1.size(0), 1)), weights = weights_rb)
                     recall_cost.backward()
                     rb_optimizer.step()
+                    self.recallLoss.append(recall_cost)
                 elif precision_training:
                     output1 = self.recall_booster(batch_x)
                     pb_optimizer.zero_grad()
                     y_pred = self.precision_booster(output1)
-                    precision_cost = self.precision_booster.cost(torch.reshape(batch_y, (batch_y.size(0), 1)), torch.reshape(y_pred, (y_pred.size(0), 1)), beta = beta_pb, epsilon = 1e-9) 
+                    precision_cost = self.precision_booster.cost(torch.reshape(batch_y, (batch_y.size(0), 1)), torch.reshape(y_pred, (y_pred.size(0), 1)), weights = weights_pb) 
                     precision_cost.backward()
                     pb_optimizer.step()
-                
-                # Added
+                    self.precisionLoss.append(precision_cost)
                 
                 yhat = (self.precision_booster(self.recall_booster(torch.Tensor(X_val))) > 0.5).float()
                 precision = self.precision_booster.getPrecision(y_val, yhat)
@@ -140,3 +137,18 @@ class PRAN():
         plt.ylabel("Value")
         
         plt.show()
+    
+    # def plotCost(self):
+    #     df = pd.DataFrame({'Epochs': np.arange(0, len(precisionLoss)), 'Precision': self.precisionLoss})
+
+    #     sns.set(style="darkgrid")
+    #     sns.lineplot(x="Epochs", y="Precision", data=df, label="Precision Cost")
+    #     sns.lineplot(x="Epochs", y="Recall", data=df, label="Recall")
+
+    #     plt.ylim(-0.1, 1.1)
+    #     plt.title("Precision and Recall Over Time")
+    #     plt.xlabel("Epochs")
+    #     plt.ylabel("Value")
+        
+    #     plt.show()
+        

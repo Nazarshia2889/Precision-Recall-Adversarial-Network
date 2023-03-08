@@ -25,17 +25,20 @@ class RecallBooster(torch.nn.Module):
         self.outDim = outDim
 
         self.hidden0 = nn.Sequential(
-            nn.Linear(self.inp, 16),
-            nn.LeakyReLU(0.2),
+            nn.Linear(self.inp, 16)
+            # nn.Dropout(0.3)
         ) 
 
         self.hidden1 = nn.Sequential(
             nn.Linear(16, 16),
-            nn.LeakyReLU(0.2),
+            nn.LeakyReLU(0.2)
+            # nn.Dropout(0.3)
         )
 
         self.out = nn.Sequential(
-            torch.nn.Linear(16, self.outDim)
+            torch.nn.Linear(16, self.outDim),
+            # torch.nn.Sigmoid()
+            nn.LeakyReLU(0.2)
         )
     
     def forward(self, x):
@@ -44,13 +47,18 @@ class RecallBooster(torch.nn.Module):
         x = self.out(x)
         return x
 
-    def cost(self, real, predicted, beta, epsilon):
-        positive_count = real.sum().item()
-        negative_count = real.numel() - positive_count
-        weights = torch.Tensor([beta])
-        bce = nn.BCEWithLogitsLoss(pos_weight=weights)
-        loss = bce(predicted, real)
-        return loss
+    # def cost(self, real, predicted, beta, epsilon):
+    #     positive_count = real.sum().item()
+    #     negative_count = real.numel() - positive_count
+    #     weights = torch.Tensor([beta])
+    #     bce = nn.BCEWithLogitsLoss(pos_weight=weights)
+    #     loss = bce(predicted, real)
+    #     return loss
+    
+    def cost(self, y_true, y_pred, weights):
+        y_pred = torch.clamp(y_pred,min=1e-7,max=1-1e-7)
+        bce = - weights[1] * y_true * torch.log(y_pred) - (1 - y_true) * weights[0] * torch.log(1 - y_pred)
+        return torch.mean(bce)
     
     def getPrecision(self, real, predicted):
         precision = precision_score(real, predicted)

@@ -27,8 +27,7 @@ class TransferModel(torch.nn.Module):
         self.outDim = 1
 
         self.hidden0 = nn.Sequential(
-            nn.Linear(self.inp, 16),
-            nn.LeakyReLU(0.2),
+            nn.Linear(self.inp, 16)
         ) 
 
         self.hidden1 = nn.Sequential(
@@ -37,7 +36,8 @@ class TransferModel(torch.nn.Module):
         ) 
 
         self.out = nn.Sequential(
-            torch.nn.Linear(16, self.outDim)
+            torch.nn.Linear(16, self.outDim),
+            torch.nn.Sigmoid()
         )
 
         self.precisionTrain = []
@@ -49,8 +49,13 @@ class TransferModel(torch.nn.Module):
         x = self.hidden1(x)
         x = self.out(x)
         return x
+    
+    def cost(self, y_pred, y_true, weights):
+        y_pred = torch.clamp(y_pred,min=1e-7,max=1-1e-7)
+        bce = - weights[1] * y_true * torch.log(y_pred) - (1 - y_true) * weights[0] * torch.log(1 - y_pred)
+        return torch.mean(bce)
 
-    def fit(self, X_train, y_train, X_val, y_val, epochs, lr, batch_size):
+    def fit(self, X_train, y_train, X_val, y_val, epochs, lr, batch_size, weights):
         optimizer = optim.Adam(self.parameters(), lr = lr)
         X_train = torch.Tensor(X_train)
         y_train = torch.Tensor(y_train)
@@ -58,15 +63,15 @@ class TransferModel(torch.nn.Module):
         my_dataset = torch.utils.data.TensorDataset(X_train, y_train)
         data_loader = torch.utils.data.DataLoader(my_dataset, batch_size=batch_size)
 
-        bce = nn.BCEWithLogitsLoss()
         epoch = 0
         for epoch in range(epochs):
             for batch_x, batch_y in data_loader:
                 optimizer.zero_grad()
                 y_pred = self(batch_x)
-                loss = bce(torch.reshape(y_pred, (y_pred.size(0), 1)), torch.reshape(batch_y, (batch_y.size(0), 1)))
+                loss = self.cost(torch.reshape(y_pred, (y_pred.size(0), 1)), torch.reshape(batch_y, (batch_y.size(0), 1)), weights)
                 loss.backward()
                 optimizer.step()
+            # print(loss)
             yhat = (self(torch.Tensor(X_val)) > 0.5).float()
             precision = precision_score(y_val, yhat)
             recall = recall_score(y_val, yhat)
